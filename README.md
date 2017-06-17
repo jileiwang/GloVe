@@ -2,7 +2,7 @@
 
 对核心代码进行了中文注释
 
-以下图片是官方介绍时候用的。我想他们是董的。Exciting!
+以下图片是官方介绍时候用的。我想他们是董的。Excited!
 
 | nearest neighbors of <br/> <em>frog</em> | Litoria             |  Leptodactylidae | Rana | Eleutherodactylus |
 | --- | ------------------------------- | ------------------- | ---------------- | ------------------- |
