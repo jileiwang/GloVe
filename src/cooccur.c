@@ -26,25 +26,10 @@
  *  vocab_count.c 是4个核心文件中的第二个文件，用于构造所有词的共现矩阵（Co-occurence Matrix）
  *  在demo.sh中给出的使用样例是：
  *   $ build/cooccur -memory 4.0 -vocab-file vocab.txt -verbose 2 -window-size 15 < text8 > cooccurrence.bin
- *  共有3个参数：
- *   - verbose:   控制是否输出debug信息
- *   - symmetric: 1
- *   - window-size  15
- *   - vocab-file  vocab.txt
- *   - memory
- *   - max-product
- *   - overflow-length
- *   - overflow-file
- *   - 
-
- *  程序使用标准输入和输出，输入是空格分隔的文件，输出是词频统计
+ *
+ *  程序使用标准输入和输出，输入是空格分隔的文件，输出是共现矩阵
  *  
- *  程序执行时，先遍历整个文件，读取每一个词，并使用哈希表来存储词频；读完后把哈希表转成数组。
- *  哈希表用链表的方式解决哈希冲突，并且使用了类似LRU的策略来提速。
-
-
-
-
+ *  
  *  
  */
 
@@ -82,13 +67,29 @@ typedef struct hashrec {
     struct hashrec *next;
 } HASHREC;
 
+// 控制是否输出debug信息，有0、1、2共三个级别
 int verbose = 2; // 0, 1, or 2
+// max_product是本程序兼具快速存储和不过度使用内存的关键
+// 把词按照词频倒序排序，得到两个词排序为w1和w2
+// 所有w1*w2<max_product的数据，直接访问一个bigram_table数组，存储在内存中，这部分词对共现的概率比较高
+// bigram_table数组的大小是依赖于max_product和vocab_size的，没有多余的空间。
+// 如果直接开辟vocab_size*vocab_size大小的二维数组，内存很有可能没那么大。所以max_product默认是按设置的内存限制来计算得到的。
+// 当w1*w2>max_product时，两个词出现的次数均不多，所以采取记录到overflow缓冲数组的方式存储。当缓冲数组满时，写入文件。
 long long max_product; // Cutoff for product of word frequency ranks below which cooccurrence counts will be stored in a compressed full array
+// 单个overflow文件的大小
 long long overflow_length; // Number of cooccurrence records whose product exceeds max_product to store in memory before writing to disk
+// 窗口大小，用于获取上下文
 int window_size = 15; // default context window size
+
+// 对称性，0表示只用当前词左侧窗口作为上下文，1表示使用当前词左右两侧对称的两个窗口作为上下文，默认为1
 int symmetric = 1; // 0: asymmetric, 1: symmetric
+// 内存消耗的软限制，单位GB，默认值3，简单的启发式限制所以并不是极端准确的
 real memory_limit = 3; // soft limit, in gigabytes, used to estimate optimal array sizes
+// vocab_file: 词表文件，默认为vocab.txt
+// file_head: overflow文件的前缀名，默认为"overflow"，文件全名为"overflow_0000.bin"，多个文件数值递增
 char *vocab_file, *file_head;
+
+
 
 /* Efficient string comparison */
 // 比较两个词是否相同
@@ -224,6 +225,7 @@ int compare_crec(const void *a, const void *b) {
 }
 
 /* Check if two cooccurrence records are for the same two words */
+// 比较两条记录是不是同一对词
 int compare_crecid(CRECID a, CRECID b) {
     int c;
     if ( (c = a.word1 - b.word1) != 0) return c;
@@ -238,9 +240,12 @@ void swap_entry(CRECID *pq, int i, int j) {
 }
 
 /* Insert entry into priority queue */
+// 插入一条记录到优先队列
 void insert(CRECID *pq, CRECID new, int size) {
     int j = size - 1, p;
+    // 插入记录
     pq[j] = new;
+    // 调整优先队列，当前节点与二叉树中的父节点相比，如果父节点小就交换，递归直到不满足或者到达根部
     while ( (p=(j-1)/2) >= 0 ) {
         if (compare_crecid(pq[p],pq[j]) > 0) {swap_entry(pq,p,j); j = p;}
         else break;
@@ -281,28 +286,37 @@ int merge_write(CRECID new, CRECID *old, FILE *fout) {
 }
 
 /* Merge [num] sorted files of cooccurrence records */
+// 把num个文件合并，每个文件都按照w1 w2的方式排序
 int merge_files(int num) {
     int i, size;
     long long counter = 0;
     CRECID *pq, new, old;
     char filename[200];
     FILE **fid, *fout;
+    // 用于打开num个文件
     fid = malloc(sizeof(FILE) * num);
+    // 维持一个大小为num的优先队列
     pq = malloc(sizeof(CRECID) * num);
+    // 输出到标准输出
     fout = stdout;
     if (verbose > 1) fprintf(stderr, "Merging cooccurrence files: processed 0 lines.");
     
     /* Open all files and add first entry of each to priority queue */
+    // 打开num个文件，每个文件读取第一条记录并存入对应的优先队列中
     for (i = 0; i < num; i++) {
+        // 打开文件
         sprintf(filename,"%s_%04d.bin",file_head,i);
         fid[i] = fopen(filename,"rb");
         if (fid[i] == NULL) {fprintf(stderr, "Unable to open file %s.\n",filename); return 1;}
+        // 读取第一条记录
         fread(&new, sizeof(CREC), 1, fid[i]);
         new.id = i;
+        // 把记录插入优先队列的i+1位置
         insert(pq,new,i+1);
     }
     
     /* Pop top node, save it in old to see if the next entry is a duplicate */
+    // 取出优先队列的头部节点存到old，然后
     size = num;
     old = pq[0];
     i = pq[0].id;
@@ -329,6 +343,7 @@ int merge_files(int num) {
     }
     fwrite(&old, sizeof(CREC), 1, fout);
     fprintf(stderr,"\033[0GMerging cooccurrence files: processed %lld lines.\n",++counter);
+    // 删除所有的overflow文件
     for (i=0;i<num;i++) {
         sprintf(filename,"%s_%04d.bin",file_head,i);
         remove(filename);
@@ -340,21 +355,13 @@ int merge_files(int num) {
 /* Collect word-word cooccurrence counts from input stream */
 // 从标准输入中构造词-词共现矩阵
 int get_cooccurrence() {
-    // TODO
     int flag, x, y, fidcounter = 1;
-    // TODO
     long long a, j = 0, k, id, counter = 0, ind = 0, vocab_size, w1, w2, *lookup, *history;
-    // TODO
     char format[20], filename[200], str[MAX_STRING_LENGTH + 1];
-    // TODO
     FILE *fid, *foverflow;
-    // TODO
     real *bigram_table, r;
-    // TODO
     HASHREC *htmp, **vocab_hash = inithashtable();
-    // TODO
     CREC *cr = malloc(sizeof(CREC) * (overflow_length + 1));
-    // TODO
     history = malloc(sizeof(long long) * window_size);
     
     // 输出参数信息
@@ -551,6 +558,7 @@ int find_arg(char *str, int argc, char **argv) {
     return -1;
 }
 
+// 入口函数，读取参数并调用主要逻辑
 int main(int argc, char **argv) {
     int i;
     real rlimit, n = 1e5;
@@ -592,13 +600,12 @@ int main(int argc, char **argv) {
     // 词表文件，默认为vocab.txt
     if ((i = find_arg((char *)"-vocab-file", argc, argv)) > 0) strcpy(vocab_file, argv[i + 1]);
     else strcpy(vocab_file, (char *)"vocab.txt");
-    // TODO
+    // file_head: overflow文件的前缀名，默认为"overflow"，文件全名为"overflow_0000.bin"，多个文件数值递增
     if ((i = find_arg((char *)"-overflow-file", argc, argv)) > 0) strcpy(file_head, argv[i + 1]);
     else strcpy(file_head, (char *)"overflow");
-    // 内存消耗的软限制，单位GB，默认值4，简单的启发式限制所以并不是极端准确的
+    // 内存消耗的软限制，单位GB，默认值3，简单的启发式限制所以并不是极端准确的
     if ((i = find_arg((char *)"-memory", argc, argv)) > 0) memory_limit = atof(argv[i + 1]);
     
-    // TODO
     /* The memory_limit determines a limit on the number of elements in bigram_table and the overflow buffer */
     /* Estimate the maximum value that max_product can take so that this limit is still satisfied */
     // 1073741824 = 2^30, 即1GB
@@ -616,9 +623,9 @@ int main(int argc, char **argv) {
     overflow_length = (long long) rlimit/6; // 0.85 + 1/6 ~= 1
     
     /* Override estimates by specifying limits explicitly on the command line */
-    // TODO
+    // 用来控制稀疏性，w1*w2<max_product的记录(w1,w2)存入bigram_table数组，其他的存入overflow的cr缓冲区
     if ((i = find_arg((char *)"-max-product", argc, argv)) > 0) max_product = atoll(argv[i + 1]);
-    // TODO
+    // overflow数组的大小，用来存储w1*w2>max_product时的共现记录
     if ((i = find_arg((char *)"-overflow-length", argc, argv)) > 0) overflow_length = atoll(argv[i + 1]);
     
     // 构造共现矩阵
