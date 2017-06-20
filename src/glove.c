@@ -23,9 +23,13 @@
 
 /***
  *  
- *  glove.c 是4个核心文件中的第一个文件，在demo.sh中给出的使用样例是：
+ *  glove.c 是4个核心文件中的第四个文件，在demo.sh中给出的使用样例是：
  *  $ build/glove -save-file vectors -threads 8 -input-file cooccurrence.shuf.bin -x-max 10 -iter 15 -vector-size 50 -binary 2 -vocab-file vocab.txt -verbose 2
- *
+ *  
+ *  本程序读取打乱后的共现矩阵，对每一条记录，用随机梯度下降的方式更新参数
+ *  参数的更新采用多线程的方式
+ *  
+ *  
  */
 
 
