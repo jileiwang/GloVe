@@ -28,7 +28,12 @@
  *   $ build/cooccur -memory 4.0 -vocab-file vocab.txt -verbose 2 -window-size 15 < text8 > cooccurrence.bin
  *
  *  程序使用标准输入和输出，输入是空格分隔的文件，输出是共现矩阵
- *  
+ *  0. 程序读取标准输入的语料，读取每个词，在一个窗口大小内记录左边的词的历史记录，然后把这一对词的加权值加入共现矩阵
+ *  1. w1和w2是某个词按词频从大到小排序的序号，从vocab_count输出的文件中读入
+ *  2. 程序使用lookup数组和bigram_table，来实现w1*w2<max_product的词对的记录直接存入bigram_table中，再次遇到的时候直接加
+ *  3. 而w1*w2>max_product的词对的记录，存入一个缓冲区overflow，缓冲区每次满的时候，排序，合并同类项，写入文件
+ *  4. 读完整个语料后，把最后一个overflow缓冲区写入文件，把bigram_table也写入文件
+ *  5. 最后，读取全部文件的记录，合并同类项并输出。由于每个文件都是排序后的，所以维持了一个文件数目为长度的优先队列，每次出队一个记录，合并同类项，然后再从对应文件中再入队一个记录
  *  
  *  
  */
@@ -57,6 +62,7 @@ typedef struct cooccur_rec_id {
     int word1;
     int word2;
     real val;
+    // i用来记录是文件数组中哪一个文件里读入的当前记录
     int id;
 } CRECID;
 
@@ -233,6 +239,7 @@ int compare_crecid(CRECID a, CRECID b) {
 }
 
 /* Swap two entries of priority queue */
+// 交换优先队列中的两个两条记录
 void swap_entry(CRECID *pq, int i, int j) {
     CRECID temp = pq[i];
     pq[i] = pq[j];
@@ -241,6 +248,7 @@ void swap_entry(CRECID *pq, int i, int j) {
 
 /* Insert entry into priority queue */
 // 插入一条记录到优先队列
+// 优先队列是一个小顶堆
 void insert(CRECID *pq, CRECID new, int size) {
     int j = size - 1, p;
     // 插入记录
@@ -253,21 +261,36 @@ void insert(CRECID *pq, CRECID new, int size) {
 }
 
 /* Delete entry from priority queue */
+// 从优先队列中删除队首记录，删除前优先队列的长度是size
+// 优先队列是一个小顶堆
 void delete(CRECID *pq, int size) {
     int j, p = 0;
+    // 把数组中最后一记录移到队首
     pq[p] = pq[size - 1];
+    // 从队首开始，二叉树的父节点跟左右子节点比较，直到比两个子节点都大于父节点，或者到队尾
+    // j是p的左子节点
     while ( (j = 2*p+1) < size - 1 ) {
+        // 如果j是当前的最后一个词了，只需要p和j比较，没有右子节点
         if (j == size - 2) {
+            // 如果节点p>j，交换二者
             if (compare_crecid(pq[p],pq[j]) > 0) swap_entry(pq,p,j);
+            // 否则直接返回，删除完成
             return;
         }
         else {
+            // 如果j不是最后一个词，需要跟左右子节点都比较
+            // 如果j<j+1，左边的节点比较小
             if (compare_crecid(pq[j], pq[j+1]) < 0) {
+                // 如果p>j，交换
                 if (compare_crecid(pq[p],pq[j]) > 0) {swap_entry(pq,p,j); p = j;}
+                // 否则p<j,j+1，那么满足小顶堆条件，直接返回
                 else return;
             }
             else {
+                // 如果j>j+1，右边的节点比较小
+                // 如果p>j+1，交换
                 if (compare_crecid(pq[p],pq[j+1]) > 0) {swap_entry(pq,p,j+1); p = j + 1;}
+                // 否则p<j,j+1，那么满足小顶堆条件，直接返回
                 else return;
             }
         }
@@ -275,12 +298,18 @@ void delete(CRECID *pq, int size) {
 }
 
 /* Write top node of priority queue to file, accumulating duplicate entries */
+// merge或者write，判断new和old是不是同一个词对的记录，如果是的话相加，不是就把old写入文件
 int merge_write(CRECID new, CRECID *old, FILE *fout) {
+    // 如果new和old是同一个词对
     if (new.word1 == old->word1 && new.word2 == old->word2) {
+        // 把new的词频加入old
         old->val += new.val;
+        // 返回0，用于统计实际写入的词对数
         return 0; // Indicates duplicate entry
     }
+    // 如果old和new不同，实际写入文件
     fwrite(old, sizeof(CREC), 1, fout);
+    // 用new顶替已经写入的old
     *old = new;
     return 1; // Actually wrote to file
 }
@@ -316,31 +345,45 @@ int merge_files(int num) {
     }
     
     /* Pop top node, save it in old to see if the next entry is a duplicate */
-    // 取出优先队列的头部节点存到old，然后
+    // 取出优先队列的头部节点存到old，然后删除这个节点并插入新节点
+    // size用来记录当前打开的文件的数目
     size = num;
     old = pq[0];
     i = pq[0].id;
+    // 删除节点
     delete(pq, size);
+    // 读取下一个词
     fread(&new, sizeof(CREC), 1, fid[i]);
+    // 如果文件读取完毕，就把size减1
     if (feof(fid[i])) size--;
     else {
+        // 否则插入新读入的词
         new.id = i;
         insert(pq, new, size);
     }
     
     /* Repeatedly pop top node and fill priority queue until files have reached EOF */
+    // 反复地从优先队列中读取一个词，写入文件或跟前一条记录合并，并新读取一个词插入优先队列，直到所有文件到底
     while (size > 0) {
+        // 把两条相同记录合并，或向文件中写入一条记录
+        // counter记录所有写入文件的记录的数目
         counter += merge_write(pq[0], &old, fout); // Only count the lines written to file, not duplicates
         if ((counter%100000) == 0) if (verbose > 1) fprintf(stderr,"\033[39G%lld lines.",counter);
+        // i是队首词的文件的下标
         i = pq[0].id;
+        // 删除队首词
         delete(pq, size);
+        // 从第i个文件中读取下一个词
         fread(&new, sizeof(CREC), 1, fid[i]);
+        // 如果文件读取完毕，就把size减1
         if (feof(fid[i])) size--;
         else {
+            // 否则插入新读入的词
             new.id = i;
             insert(pq, new, size);
         }
     }
+    // 把最后一个old写入文件
     fwrite(&old, sizeof(CREC), 1, fout);
     fprintf(stderr,"\033[0GMerging cooccurrence files: processed %lld lines.\n",++counter);
     // 删除所有的overflow文件

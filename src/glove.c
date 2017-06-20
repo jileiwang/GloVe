@@ -21,6 +21,13 @@
 //    GlobalVectors@googlegroups.com
 //    http://nlp.stanford.edu/projects/glove/
 
+/***
+ *  
+ *  glove.c 是4个核心文件中的第一个文件，在demo.sh中给出的使用样例是：
+ *  $ build/glove -save-file vectors -threads 8 -input-file cooccurrence.shuf.bin -x-max 10 -iter 15 -vector-size 50 -binary 2 -vocab-file vocab.txt -verbose 2
+ *
+ */
+
 
 #include <stdint.h>
 #include <stdio.h>

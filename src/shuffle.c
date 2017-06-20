@@ -21,6 +21,15 @@
 //    GlobalVectors@googlegroups.com
 //    http://nlp.stanford.edu/projects/glove/
 
+
+
+/***
+ *  
+ *  shuffle.c 是4个核心文件中的第一个文件，在demo.sh中给出的使用样例是：
+ *  $ build/shuffle -memory 4.0 -verbose 2 < cooccurrence.bin > cooccurrence.shuf.bin
+ *
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
