@@ -502,6 +502,7 @@ int get_cooccurrence() {
         if (htmp == NULL) continue; // Skip out-of-vocabulary words
         // 目标词的词频排名
         w2 = htmp->id; // Target word (frequency rank)
+        // 倒序从当前词j的左侧第一个词j-1开始，向左一个个遍历，直到遍历了window_size或者到达了句首
         for (k = j - 1; k >= ( (j > window_size) ? j - window_size : 0 ); k--) { // Iterate over all words to the left of target word, but not past beginning of line
             // history记录了各个之前读到的词的词频排名
             // 这个模窗口大小作为存储位置的实现，非常优雅，就是一个最简单的循环列表
