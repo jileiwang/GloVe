@@ -46,11 +46,16 @@
 
 typedef double real;
 
+// 共现矩阵里的记录
 typedef struct cooccur_rec {
+    // 数值类型，用词频排序后的序号来代表词
     int word1;
     int word2;
+    // 加权后计算出来的共现率
     real val;
 } CREC;
+
+// 参数区
 
 int write_header=0; //0=no, 1=yes; writes vocab_size/vector_size as first line for use with some libraries, such as gensim.
 int verbose = 2; // 0, 1, or 2
@@ -68,12 +73,14 @@ real *W, *gradsq, *cost;
 long long num_lines, *lines_per_thread, vocab_size;
 char *vocab_file, *input_file, *save_W_file, *save_gradsq_file;
 
+// 快速比较两个词是否相同
 /* Efficient string comparison */
 int scmp( char *s1, char *s2 ) {
     while (*s1 != '\0' && *s1 == *s2) {s1++; s2++;}
     return(*s1 - *s2);
 }
 
+// 初始化词向量和梯度向量，采用随机初始化
 void initialize_parameters() {
     long long a, b;
     vector_size++; // Temporarily increment to allocate space for bias
@@ -94,6 +101,7 @@ void initialize_parameters() {
     vector_size--;
 }
 
+// 检查是否是超出范围的数了
 inline real check_nan(real update) {
     if (isnan(update) || isinf(update)) {
         fprintf(stderr,"\ncaught NaN in update");
@@ -103,6 +111,7 @@ inline real check_nan(real update) {
     }
 }
 
+// 用多线程来训练模型
 /* Train the GloVe model */
 void *glove_thread(void *vid) {
     long long a, b ,l1, l2;
@@ -177,6 +186,7 @@ void *glove_thread(void *vid) {
     pthread_exit(NULL);
 }
 
+// 把得到的结果保存到文件中
 /* Save params to file */
 int save_params(int nb_iter) {
     /*
@@ -292,6 +302,7 @@ int save_params(int nb_iter) {
     return 0;
 }
 
+// 训练模型
 /* Train model */
 int train_glove() {
     long long a, file_size;
@@ -353,6 +364,7 @@ int train_glove() {
     return save_params(0);
 }
 
+// 查看某个参数用户是否给出
 int find_arg(char *str, int argc, char **argv) {
     int i;
     for (i = 1; i < argc; i++) {
@@ -367,6 +379,7 @@ int find_arg(char *str, int argc, char **argv) {
     return -1;
 }
 
+// 主函数，读取参数，调用核心逻辑
 int main(int argc, char **argv) {
     int i;
     FILE *fid;

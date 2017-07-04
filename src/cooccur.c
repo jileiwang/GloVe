@@ -104,6 +104,9 @@ int scmp( char *s1, char *s2 ) {
     return(*s1 - *s2);
 }
 
+// 哈希函数、数据结构、哈希表的初始化、插入、查找，都是从这个网址的源代码中稍加修改而来
+// 修改的部分就是数据结构，和哈希表的默认长度
+// 很不错的源代码，可以仔细学习一些原理
 /* Move-to-front hashing and hash function from Hugh Williams, http://www.seg.rmit.edu.au/code/zwh-ipl/ */
 
 /* Simple bitwise hash function */
